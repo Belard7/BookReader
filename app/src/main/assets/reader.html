@@ -3,612 +3,444 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Lector Premium</title>
+    <title>Lector EPUB</title>
 
     <!-- Librerías -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&display=swap');
 
+        /* --- BASE --- */
         body {
             margin: 0; font-family: 'Inter', sans-serif;
-            background-color: #f3f4f6; transition: background-color 0.3s ease;
+            background-color: #f9fafb;
             overflow: hidden;
-            user-select: text; -webkit-user-select: text;
+            user-select: auto; -webkit-user-select: auto;
+            -webkit-tap-highlight-color: transparent;
         }
 
-        /* --- MODO NOCTURNO --- */
+        /* --- TEMA OSCURO --- */
         body.dark-mode { background-color: #111827; color: #e5e7eb; }
-        body.dark-mode canvas { filter: invert(0.9) hue-rotate(180deg); }
-        body.dark-mode #pdf-wrapper { background-color: #1f2937; box-shadow: none; }
+        body.dark-mode #viewer { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
+        body.dark-mode img { filter: invert(1) hue-rotate(180deg); }
 
-        /* --- LECTOR --- */
-        #reader-view {
-            height: 100vh; overflow-y: auto; padding: 1rem; padding-bottom: 8rem;
-            scroll-behavior: smooth; display: block; position: relative;
-        }
-        #reader-view.hidden { display: none; }
-
-        #pdf-wrapper {
-            background: white; margin: 0 auto;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); border-radius: 8px; position: relative;
+        /* --- VISTAS --- */
+        .view-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+            display: flex; flex-direction: column;
         }
 
-        /* CAPAS */
-        .textLayer {
-            position: absolute; inset: 0; line-height: 1.0; z-index: 10;
-            mix-blend-mode: multiply; opacity: 1;
-        }
-        body.dark-mode .textLayer { mix-blend-mode: screen; }
-
-        .textLayer span {
-            position: absolute; color: transparent; cursor: text;
-            white-space: pre; transform-origin: 0% 0%; box-sizing: border-box;
-            overflow: hidden; white-space: nowrap;
-        }
-
-        /* Color de selección nativa */
-        ::selection { background: rgba(59, 130, 246, 0.4); }
-        body.dark-mode ::selection { background: rgba(100, 200, 255, 0.5); }
-
-        /* --- UI COMPONENTES --- */
-        #translation-card {
-            position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
-            width: 90%; max-width: 400px;
-            background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px);
-            border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.2);
-            z-index: 100; display: none; border: 1px solid rgba(255,255,255,0.5);
-            touch-action: none;
-        }
-        body.dark-mode #translation-card {
-            background: rgba(31, 41, 55, 0.95); border-color: rgba(55, 65, 81, 0.5);
-            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-        }
-        .card-handle { height: 6px; width: 40px; background: #e5e7eb; border-radius: 10px; margin: 12px auto; }
-        body.dark-mode .card-handle { background: #4b5563; }
-
-        /* --- BARRA NAVEGACIÓN --- */
-        #nav-controls {
-            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-            display: none; align-items: center; gap: 12px; padding: 8px 16px;
-            background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(12px);
-            border-radius: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-            z-index: 50; width: max-content; max-width: 95%;
-        }
-        .nav-btn { background: transparent; border: none; color: #9ca3af; padding: 10px; border-radius: 14px; }
-        .nav-btn:active { background: rgba(255,255,255,0.1); color: white; }
-        .nav-btn.primary { color: white; background: rgba(255,255,255,0.1); }
-        #page-display { font-variant-numeric: tabular-nums; color: white; font-weight: 600; font-size: 14px; min-width: 60px; text-align: center; }
+        .hidden-view { transform: translateX(100%); pointer-events: none; }
 
         /* --- BIBLIOTECA --- */
-        #library-view { padding: 1.5rem; padding-bottom: 6rem; min-height: 100vh; }
-        .book-card {
-            background: white; border-radius: 16px; padding: 1rem;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-            display: flex; flex-direction: column; align-items: center; text-align: center;
-            position: relative;
-        }
-        body.dark-mode .book-card { background: #1f2937; box-shadow: none; border: 1px solid #374151; }
-        .book-cover { width: 60px; height: 85px; background: linear-gradient(135deg, #3b82f6, #2563eb); border-radius: 6px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; color: white; }
+        #library-view { overflow-y: auto; padding: 20px; padding-bottom: 80px; background-color: #f9fafb; }
+        body.dark-mode #library-view { background-color: #111827; }
 
-        .fab {
-            position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px;
-            background: #2563eb; color: white; border-radius: 50%;
+        .book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 20px; }
+
+        .book-item {
+            display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer;
+        }
+        .book-cover {
+            width: 100px; height: 150px;
+            background: linear-gradient(45deg, #3b82f6, #2563eb);
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 10px 25px rgba(37, 99, 235, 0.4); border: none; z-index: 50;
+            color: white; font-size: 2rem; transition: transform 0.1s;
+        }
+        .book-item:active .book-cover { transform: scale(0.95); }
+
+        /* --- LECTOR --- */
+        #reader-view { background-color: white; }
+        body.dark-mode #reader-view { background-color: #111827; }
+        #viewer { flex: 1; width: 100%; height: 100%; }
+
+        /* Header Flotante */
+        #reader-header {
+            position: absolute; top: 0; left: 0; width: 100%;
+            background: rgba(255,255,255,0.95); border-bottom: 1px solid #eee;
+            padding: 15px; display: flex; justify-content: space-between; align-items: center;
+            transform: translateY(-100%); transition: transform 0.3s ease; z-index: 50;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        body.dark-mode #reader-header { background: rgba(17, 24, 39, 0.95); border-color: #374151; }
+        #reader-header.visible { transform: translateY(0); }
+
+        /* Zona invisible en la parte superior */
+        #top-trigger {
+            position: absolute; top: 0; left: 0; width: 100%; height: 60px; z-index: 49;
         }
 
-        /* --- FLASHCARDS 3D --- */
-        #flashcards-view {
-            height: 100vh; background: #f3f4f6; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px;
+        /* --- BARRA DE PROGRESO --- */
+        #progress-container {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 3px;
+            background: rgba(0,0,0,0.1); z-index: 40;
         }
-        #flashcards-view.hidden { display: none; }
-        body.dark-mode #flashcards-view { background: #111827; }
-
-        /* Contenedor principal de la tarjeta (Escena) */
-        .flash-card {
-            width: 100%; max-width: 350px;
-            height: 450px; /* Altura fija para mejor efecto 3D */
-            perspective: 1000px; /* Profundidad 3D */
-            cursor: pointer;
-            margin-bottom: 20px;
+        body.dark-mode #progress-container { background: rgba(255,255,255,0.1); }
+        #progress-bar {
+            height: 100%; width: 0%; background: linear-gradient(90deg, #2563eb, #3b82f6);
+            transition: width 0.3s ease; border-radius: 0 2px 2px 0;
         }
 
-        /* El objeto que gira */
-        .flash-card-inner {
-            position: relative;
-            width: 100%;
-            height: 100%;
-            text-align: center;
-            transition: transform 0.6s cubic-bezier(0.4, 0.0, 0.2, 1);
-            transform-style: preserve-3d;
-            border-radius: 24px;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.1);
-        }
-        body.dark-mode .flash-card-inner { box-shadow: 0 20px 50px rgba(0,0,0,0.3); }
-
-        /* Estado Girado */
-        .flash-card.flipped .flash-card-inner {
-            transform: rotateY(180deg);
-        }
-
-        /* Las caras de la tarjeta */
-        .card-face {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            -webkit-backface-visibility: hidden;
-            backface-visibility: hidden; /* Ocultar la cara de atrás */
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 2rem;
-            background: white;
-            border-radius: 24px;
+        /* --- PANEL DE TRADUCCIÓN --- */
+        #bottom-sheet {
+            position: fixed; bottom: 20px; left: 20px; right: 20px;
+            background: white; border-radius: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            transform: translateY(150%);
+            transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 100; padding: 24px;
             border: 1px solid rgba(0,0,0,0.05);
+            max-width: 500px; margin: 0 auto;
         }
-        body.dark-mode .card-face {
-            background: #1f2937;
-            border-color: rgba(255,255,255,0.05);
+        body.dark-mode #bottom-sheet { background: #1f2937; border: 1px solid #374151; }
+        #bottom-sheet.active { transform: translateY(0); }
+
+        #sheet-word { font-family: 'Lora', serif; letter-spacing: -0.02em; }
+
+        /* --- PANEL DE BÚSQUEDA --- */
+        #search-panel {
+            position: fixed; top: 80px; left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            width: 90%; max-width: 500px;
+            background: white; border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            padding: 20px; z-index: 90; opacity: 0; visibility: hidden;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
+        body.dark-mode #search-panel { background: #1f2937; border: 1px solid #374151; }
+        #search-panel.active { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
 
-        /* La cara trasera debe estar girada inicialmente */
-        .card-face.back {
-            transform: rotateY(180deg);
-            background: #f8fafc;
+        /* FAB */
+        .fab {
+            position: fixed; bottom: 30px; right: 30px; width: 56px; height: 56px;
+            background: #2563eb; color: white; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4); z-index: 60;
+            transition: transform 0.2s;
         }
-        body.dark-mode .card-face.back { background: #111827; }
+        .fab:active { transform: scale(0.9); }
 
-        .fc-word { font-size: 32px; font-weight: bold; color: #1f2937; margin-bottom: 10px; }
-        body.dark-mode .fc-word { color: white; }
-
-        /* CORRECCIÓN: Scroll para el contexto si es muy largo */
-        .fc-context {
-            font-size: 14px;
-            color: #6b7280;
-            font-style: italic;
-            margin-top: 10px;
-            line-height: 1.5;
-            max-height: 120px; /* Límite de altura */
-            overflow-y: auto;  /* Barra de desplazamiento si se pasa */
-            width: 100%;
-            padding: 0 5px;
-        }
-        body.dark-mode .fc-context { color: #9ca3af; }
-
-        .fc-translation { font-size: 24px; color: #2563eb; font-weight: 600; margin-top: 20px; }
-
-        .btn-flip { background: #2563eb; color: white; padding: 15px; border-radius: 16px; width: 100%; max-width: 350px; text-align: center; font-weight: bold; margin-top: 10px; box-shadow: 0 4px 15px rgba(37,99,235,0.3); }
-
+        ::selection { background: transparent !important; }
     </style>
 </head>
 <body>
 
-<!-- BIBLIOTECA -->
-<div id="library-view">
-    <div class="flex justify-between items-center mb-6 mt-2">
-        <div>
-            <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Biblioteca</h1>
-            <p class="text-sm text-gray-500 dark:text-gray-400">Tus libros guardados</p>
-        </div>
-        <div class="flex gap-2">
-            <button onclick="openFlashcards()" class="p-2 rounded-full bg-white dark:bg-gray-800 text-blue-600 shadow-sm border border-gray-100 dark:border-gray-700">
-                <i data-lucide="layers" class="w-5 h-5"></i>
-            </button>
-            <button onclick="toggleDarkMode()" class="p-2 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-yellow-400">
-                <i data-lucide="moon" class="w-5 h-5 dark:hidden"></i>
-                <i data-lucide="sun" class="w-5 h-5 hidden dark:block"></i>
-            </button>
-        </div>
+<!-- 1. BIBLIOTECA -->
+<div id="library-view" class="view-container">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Mis Libros</h1>
+        <button onclick="toggleDarkMode()" class="p-2 rounded-full bg-gray-100 dark:bg-gray-800">
+            <i data-lucide="moon" class="w-5 h-5 text-gray-600 dark:text-yellow-400"></i>
+        </button>
     </div>
-    <div id="books-grid" class="grid grid-cols-2 gap-4"></div>
-    <div id="empty-state" class="hidden flex flex-col items-center justify-center mt-20 opacity-50">
-        <i data-lucide="library" class="w-16 h-16 mb-2"></i>
-        <p>No hay libros aún</p>
+    <div id="books-grid" class="book-grid"></div>
+    <div id="empty-state" class="hidden flex flex-col items-center justify-center mt-32 text-gray-400 opacity-50">
+        <i data-lucide="book-open" class="w-16 h-16 mb-4"></i>
+        <p>Biblioteca vacía</p>
     </div>
     <button onclick="addBook()" class="fab"><i data-lucide="plus" class="w-8 h-8"></i></button>
 </div>
 
-<!-- FLASHCARDS VIEW -->
-<div id="flashcards-view" class="hidden">
-    <div class="w-full max-w-sm flex justify-between items-center mb-6">
-        <button onclick="closeFlashcards()" class="p-2 rounded-full bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-300"><i data-lucide="x" class="w-5 h-5"></i></button>
-        <span class="font-bold text-gray-500 dark:text-gray-400">Repaso</span>
-        <div class="w-9"></div>
-    </div>
-    <div id="fc-container" class="w-full flex flex-col items-center"></div>
-</div>
-
-<!-- LECTOR -->
-<main id="reader-view" class="hidden">
-    <div id="pdf-wrapper">
-        <canvas id="the-canvas" style="display:block; width:100%; pointer-events:none;"></canvas>
-        <div id="text-layer" class="textLayer"></div>
-    </div>
-</main>
-
-<!-- NAVEGACIÓN -->
-<div id="nav-controls">
-    <button onclick="exitBook()" class="nav-btn"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
-    <div class="h-6 w-px bg-white/10 mx-1"></div>
-    <button onclick="prevPage()" class="nav-btn primary"><i data-lucide="chevron-left" class="w-6 h-6"></i></button>
-    <span id="page-display">1 / --</span>
-    <button onclick="nextPage()" class="nav-btn primary"><i data-lucide="chevron-right" class="w-6 h-6"></i></button>
-    <div class="h-6 w-px bg-white/10 mx-1"></div>
-    <button onclick="toggleDarkMode()" class="nav-btn">
-        <i data-lucide="moon" class="w-5 h-5 dark:hidden"></i>
-        <i data-lucide="sun" class="w-5 h-5 hidden dark:block"></i>
-    </button>
-</div>
-
-<!-- TARJETA TRADUCCIÓN -->
-<div id="translation-card">
-    <div id="card-header" class="pt-2 pb-1 cursor-grab active:cursor-grabbing"><div class="card-handle"></div></div>
-    <div class="px-5 pb-5">
-        <div class="flex justify-between items-start mb-2">
-            <div class="flex-1 pr-2"><p id="original-text" class="text-xs text-gray-400 dark:text-gray-500 font-serif italic line-clamp-2">...</p></div>
-            <div class="flex gap-2">
-                <!-- Botón Guardar -->
-                <button onclick="toggleSave()" id="save-btn" class="text-gray-400 p-1 hover:text-blue-500 rounded-full transition-colors" title="Guardar offline">
-                    <i data-lucide="bookmark" class="w-4 h-4"></i>
-                </button>
-                <button onclick="closeCard()" class="text-gray-400 p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full">
-                    <i data-lucide="x" class="w-4 h-4"></i>
-                </button>
-            </div>
+<!-- 2. LECTOR -->
+<div id="reader-view" class="view-container hidden-view">
+    <div id="reader-header">
+        <button onclick="exitBook()" class="flex items-center text-gray-600 dark:text-gray-300">
+            <i data-lucide="chevron-left" class="w-6 h-6 mr-1"></i> Biblioteca
+        </button>
+        <div class="flex gap-4">
+            <button onclick="toggleSearch()" class="text-gray-600 dark:text-gray-300"><i data-lucide="search" class="w-5 h-5"></i></button>
+            <button onclick="changeFontSize()" class="text-gray-600 dark:text-gray-300"><i data-lucide="type" class="w-5 h-5"></i></button>
+            <button onclick="toggleDarkMode()" class="text-gray-600 dark:text-gray-300"><i data-lucide="moon" class="w-5 h-5"></i></button>
         </div>
-        <div class="min-h-[3rem] flex items-center mb-4"><p id="trans-result" class="text-lg font-bold text-gray-800 dark:text-gray-100 leading-tight">...</p></div>
-        <button onclick="speak()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg">
-            <i data-lucide="volume-2" class="w-5 h-5"></i><span>Escuchar</span>
+    </div>
+    <div id="top-trigger" onclick="toggleControls()"></div>
+    <div id="viewer"></div>
+    <div id="page-indicator" class="absolute bottom-4 left-0 w-full text-center text-xs text-gray-400 dark:text-gray-600 pointer-events-none font-mono">Calculando...</div>
+    <div id="progress-container"><div id="progress-bar"></div></div>
+</div>
+
+<!-- 3. PANEL DE TRADUCCIÓN -->
+<div id="bottom-sheet">
+    <div class="flex justify-between items-start mb-4">
+        <div>
+            <h2 id="sheet-word" class="text-3xl font-bold text-gray-900 dark:text-white">...</h2>
+            <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider mt-1 block">Traducción</span>
+        </div>
+        <button onclick="closeSheet()" class="p-2 bg-gray-100 dark:bg-gray-800 rounded-full text-gray-500 hover:bg-gray-200 transition-colors">
+            <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+    </div>
+    <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800/50">
+        <p id="sheet-translation" class="text-lg text-blue-700 dark:text-blue-300 font-medium leading-relaxed">Traduciendo...</p>
+    </div>
+    <div class="grid grid-cols-2 gap-4">
+        <button onclick="speak()" class="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 py-3.5 rounded-xl font-semibold active:scale-95 transition-all hover:bg-gray-200 dark:hover:bg-gray-700">
+            <i data-lucide="volume-2" class="w-5 h-5"></i> Escuchar
+        </button>
+        <button onclick="toggleSave()" id="btn-save" class="flex items-center justify-center gap-2 bg-blue-600 text-white py-3.5 rounded-xl font-semibold active:scale-95 transition-all hover:bg-blue-700 shadow-lg shadow-blue-500/30">
+            <i data-lucide="bookmark" class="w-5 h-5"></i> Guardar
         </button>
     </div>
 </div>
 
-<script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+<!-- 4. PANEL DE BÚSQUEDA -->
+<div id="search-panel">
+    <div class="flex items-center gap-3 mb-4">
+        <i data-lucide="search" class="w-5 h-5 text-gray-400"></i>
+        <input type="text" id="search-input" placeholder="Buscar en el libro..." class="flex-1 bg-transparent outline-none text-gray-900 dark:text-white text-lg">
+        <button onclick="closeSearch()" class="p-2"><i data-lucide="x" class="w-5 h-5 text-gray-400"></i></button>
+    </div>
+    <div id="search-results" class="max-h-60 overflow-y-auto space-y-2"></div>
+    <div class="mt-4 text-sm text-gray-400 text-center" id="search-status">Escribe para buscar</div>
+</div>
 
-    let pdfDoc = null, pageNum = 1, currentBookId = null, currentText = "";
-    let pageFullText = "";
+<script>
+    lucide.createIcons();
+    let book = null, rendition = null;
+    let currentBookId = null, currentText = "";
     let isDarkMode = localStorage.getItem('darkMode') === 'true';
-    let selectionDebounce = null;
+    let fontSize = 100;
+    let tempHighlight = null;
+    let isSearchActive = false;
+    let searchTimeout = null;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    const SWIPE_THRESHOLD = 50;
 
     window.onload = function() {
         if(isDarkMode) document.body.classList.add('dark-mode');
-        lucide.createIcons();
         loadLibrary();
     };
 
-    // --- SISTEMA DE DATOS ---
-    function getSavedDictionary() {
-        const data = localStorage.getItem('my_dictionary_v2');
-        return data ? JSON.parse(data) : {};
-    }
+    window.notifyBookReady = function() {
+        document.getElementById('library-view').classList.add('hidden-view');
+        document.getElementById('reader-view').classList.remove('hidden-view');
+        setTimeout(() => { document.getElementById('reader-header').classList.add('visible'); }, 300);
 
-    // --- FLASHCARDS MEJORADAS (3D FLIP) ---
-    let studyQueue = [];
-    let currentCardIdx = 0;
-
-    function openFlashcards() {
-        const dict = getSavedDictionary();
-        const keys = Object.keys(dict);
-        if (keys.length === 0) {
-            alert("Primero guarda palabras traduciendo textos en un libro.");
-            return;
-        }
-        studyQueue = keys.sort(() => Math.random() - 0.5);
-        currentCardIdx = 0;
-
-        document.getElementById('library-view').style.display = 'none';
-        document.getElementById('flashcards-view').classList.remove('hidden');
-        document.getElementById('flashcards-view').style.display = 'flex';
-
-        showNextCard();
-    }
-
-    function closeFlashcards() {
-        document.getElementById('flashcards-view').style.display = 'none';
-        document.getElementById('library-view').style.display = 'block';
-    }
-
-    function showNextCard() {
-        const container = document.getElementById('fc-container');
-        if (currentCardIdx >= studyQueue.length) {
-            container.innerHTML = `<div class="text-center"><h2 class="text-2xl font-bold mb-4 dark:text-white">¡Repaso Completado!</h2><button onclick="closeFlashcards()" class="btn-flip">Volver</button></div>`;
-            return;
-        }
-
-        const word = studyQueue[currentCardIdx];
-        const data = getSavedDictionary()[word];
-        const maskedContext = data.context ? data.context.replace(new RegExp(word, 'gi'), '_____') : '';
-
-        container.innerHTML = `
-            <div class="flash-card" onclick="this.classList.toggle('flipped')">
-                <div class="flash-card-inner">
-                    <!-- FRENTE: Significado -->
-                    <div class="card-face front">
-                        <div class="text-xs text-gray-400 uppercase tracking-widest mb-4">Adivina la palabra</div>
-                        <div class="text-3xl font-bold text-gray-800 dark:text-white mb-6">${data.translation}</div>
-                        ${maskedContext ? `<div class="fc-context">"${maskedContext}"</div>` : ''}
-                        <div class="mt-auto text-blue-500 text-sm font-semibold">Toca para girar ↻</div>
-                    </div>
-
-                    <!-- REVERSO: Respuesta -->
-                    <div class="card-face back">
-                        <div class="text-xs text-gray-400 uppercase tracking-widest mb-4">Respuesta</div>
-                        <div class="text-4xl font-bold text-blue-600 dark:text-blue-400 mb-2">${word}</div>
-                        <div class="mt-auto"></div>
-                    </div>
-                </div>
-            </div>
-            <!-- Botón separado para evitar giros accidentales -->
-            <button onclick="event.stopPropagation(); nextCard()" class="btn-flip">Siguiente</button>
-        `;
-    }
-
-    window.nextCard = function() {
-        currentCardIdx++;
-        showNextCard();
-    }
-
-    // --- GUARDADO INTELIGENTE ---
-    function toggleSave() {
-        const resultText = document.getElementById('trans-result').innerText;
-        if(!currentText || resultText.includes("...")) return;
-
-        const dict = getSavedDictionary();
-        const btn = document.getElementById('save-btn');
-
-        if (dict[currentText]) {
-            delete dict[currentText];
-            btn.classList.remove('text-yellow-500');
-            btn.classList.add('text-gray-400');
-        } else {
-            let context = "";
-            if (pageFullText) {
-                const idx = pageFullText.indexOf(currentText);
-                if (idx !== -1) {
-                    const start = pageFullText.lastIndexOf('.', idx) + 1;
-                    let end = pageFullText.indexOf('.', idx + currentText.length);
-                    if (end === -1) end = pageFullText.length;
-                    context = pageFullText.substring(start, end + 1).trim();
-                }
-            }
-
-            dict[currentText] = {
-                translation: resultText,
-                context: context || "Contexto no encontrado"
-            };
-
-            btn.classList.remove('text-gray-400');
-            btn.classList.add('text-yellow-500');
-        }
-
-        localStorage.setItem('my_dictionary_v2', JSON.stringify(dict));
-        lucide.createIcons();
-    }
-
-    // --- CORE LECTOR ---
-    function checkSavedState(text) {
-        const dict = getSavedDictionary();
-        const btn = document.getElementById('save-btn');
-
-        if (dict[text]) {
-            btn.classList.remove('text-gray-400');
-            btn.classList.add('text-yellow-500');
-            return dict[text].translation;
-        } else {
-            btn.classList.remove('text-yellow-500');
-            btn.classList.add('text-gray-400');
-            return null;
-        }
-    }
-
-    function translate(text) {
-        currentText = text;
-        document.getElementById('original-text').innerText = text;
-        const offlineTranslation = checkSavedState(text);
-        const resultLabel = document.getElementById('trans-result');
-        document.getElementById('translation-card').style.display = 'block';
-
-        if (offlineTranslation) {
-            resultLabel.innerText = offlineTranslation;
-            return;
-        }
-
-        resultLabel.innerHTML = '<span class="animate-pulse opacity-50">Traduciendo...</span>';
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q=${encodeURIComponent(text)}`;
-        fetch(url).then(r => r.json()).then(d => {
-            if(d && d[0]) resultLabel.innerText = d[0].map(s => s[0]).join('');
-        }).catch(() => resultLabel.innerText = "Error de conexión");
-    }
-
-    document.addEventListener('selectionchange', () => {
-        clearTimeout(selectionDebounce);
-        selectionDebounce = setTimeout(() => {
-            const selection = window.getSelection();
-            if (!selection || selection.isCollapsed) return;
-            const rawText = selection.toString();
-            let cleanText = rawText.trim().replace(/-\s*[\r\n]+\s*/g, "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ");
-            if (cleanText.length > 0 && cleanText !== currentText) translate(cleanText);
-        }, 600);
-    });
-
-    // --- RENDERIZADO MEJORADO (Proporcional visual) ---
-    function renderPage(num) {
-        if(currentBookId) localStorage.setItem(currentBookId, num);
-        window.getSelection().removeAllRanges();
-
-        pdfDoc.getPage(num).then(page => {
-            const containerWidth = document.body.clientWidth - 32;
-            const viewport = page.getViewport({scale: 1.0});
-            const scale = containerWidth / viewport.width;
-            const scaledViewport = page.getViewport({scale: scale});
-
-            const canvas = document.getElementById('the-canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.height = scaledViewport.height; canvas.width = scaledViewport.width;
-
-            const wrapper = document.getElementById('pdf-wrapper');
-            wrapper.style.width = scaledViewport.width + "px"; wrapper.style.height = scaledViewport.height + "px";
-            document.getElementById('reader-view').scrollTop = 0;
-
-            page.render({canvasContext: ctx, viewport: scaledViewport}).promise.then(() => {
-                return page.getTextContent();
-            }).then(textContent => {
-                pageFullText = textContent.items.map(i => i.str).join(" ");
-
-                const layer = document.getElementById('text-layer');
-                layer.innerHTML = "";
-                const measureCtx = document.createElement('canvas').getContext('2d');
-
-                textContent.items.forEach(item => {
-                    if(!item.str.trim()) return;
-                    const tx = pdfjsLib.Util.transform(scaledViewport.transform, item.transform);
-                    const fontHeight = Math.sqrt((tx[2]*tx[2]) + (tx[3]*tx[3]));
-
-                    // Divide y vencerás
-                    const words = item.str.match(/([^\s]+\s*)/g) || [item.str];
-
-                    // Cálculo preciso de anchos basado en medición real
-                    measureCtx.font = `${fontHeight}px sans-serif`;
-
-                    // Medir cada palabra
-                    const measuredWidths = words.map(w => measureCtx.measureText(w).width);
-                    const totalMeasured = measuredWidths.reduce((a, b) => a + b, 0);
-
-                    // Factor de corrección para ajustar al ancho real del PDF
-                    const pdfTotalWidth = item.width * scale;
-                    const ratio = totalMeasured > 0 ? pdfTotalWidth / totalMeasured : 1;
-
-                    let currentX = tx[4];
-                    const startY = tx[5] - fontHeight;
-
-                    words.forEach((wordStr, idx) => {
-                        const span = document.createElement('span');
-                        span.textContent = wordStr;
-
-                        // Ancho corregido visualmente
-                        const wordWidth = measuredWidths[idx] * ratio;
-
-                        span.style.left = currentX + 'px';
-                        span.style.top = startY + 'px';
-                        span.style.fontSize = fontHeight + 'px';
-                        span.style.width = wordWidth + "px";
-                        span.style.height = fontHeight + "px";
-
-                        if (measuredWidths[idx] > 0) {
-                            span.style.transform = `scaleX(${ratio})`;
-                        }
-
-                        span.onclick = (e) => {
-                            const sel = window.getSelection();
-                            if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
-                            e.stopPropagation();
-                            const range = document.createRange();
-                            range.selectNodeContents(span);
-                            sel.removeAllRanges();
-                            sel.addRange(range);
-                        };
-
-                        layer.appendChild(span);
-                        currentX += wordWidth;
-                    });
-                });
-            });
-            document.getElementById('page-display').innerText = `${num} / ${pdfDoc.numPages}`;
-        });
-    }
-
-    // --- SISTEMA BASE ---
-    function toggleDarkMode() {
-        isDarkMode = !isDarkMode;
-        document.body.classList.toggle('dark-mode');
-        localStorage.setItem('darkMode', isDarkMode);
-        lucide.createIcons();
-    }
-    function loadLibrary() {
-        if(window.AndroidInterface) {
-            try {
-                const json = window.AndroidInterface.getLibraryList();
-                const books = JSON.parse(json);
-                const grid = document.getElementById('books-grid');
-                grid.innerHTML = "";
-                if(books.length === 0) document.getElementById('empty-state').classList.remove('hidden');
-                else {
-                    document.getElementById('empty-state').classList.add('hidden');
-                    books.forEach(book => {
-                        const savedPage = localStorage.getItem("prog_" + book.name) || 1;
-                        const card = document.createElement('div');
-                        card.className = 'book-card active:bg-gray-50 dark:active:bg-gray-800';
-                        const cleanName = book.name.replace(/^libro_/, '').replace(/\d+_/, '').replace(/\.pdf$/i, '');
-                        card.innerHTML = `<div class="book-cover"><i data-lucide="book" class="w-8 h-8"></i></div><h3 class="text-sm font-bold text-gray-800 dark:text-gray-200 line-clamp-2 leading-tight mb-1">${cleanName}</h3><span class="text-xs text-blue-500 font-medium bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full">Pág. ${savedPage}</span>`;
-                        card.onclick = () => window.AndroidInterface.loadBook(book.name);
-                        grid.appendChild(card);
-                    });
-                    lucide.createIcons();
-                }
-            } catch(e) {}
-        }
-    }
-    function addBook() { if(window.AndroidInterface) window.AndroidInterface.triggerFilePicker(); }
-    window.notifyPdfReady = function() {
-        document.getElementById('library-view').style.display = 'none';
-        document.getElementById('reader-view').classList.remove('hidden');
-        document.getElementById('nav-controls').style.display = 'flex';
-        const base64 = window.AndroidInterface.getPdfData();
+        const base64 = window.AndroidInterface.getBookData();
         const fileName = window.AndroidInterface.getCurrentBookName();
         currentBookId = "prog_" + fileName;
-        loadPdf(base64);
-    }
-    function exitBook() {
-        if(currentBookId) localStorage.setItem(currentBookId, pageNum);
-        document.getElementById('reader-view').classList.add('hidden');
-        document.getElementById('nav-controls').style.display = 'none';
-        document.getElementById('translation-card').style.display = 'none';
-        document.getElementById('library-view').style.display = 'block';
-        loadLibrary();
-    }
-    function loadPdf(base64) {
-        const saved = localStorage.getItem(currentBookId);
-        pageNum = saved ? parseInt(saved) : 1;
+
         const binary = atob(base64);
         const len = binary.length;
         const bytes = new Uint8Array(len);
-        for(let i=0; i<len; i++) bytes[i] = binary.charCodeAt(i);
-        pdfjsLib.getDocument(bytes).promise.then(doc => {
-            pdfDoc = doc;
-            if(pageNum > doc.numPages) pageNum = 1;
-            renderPage(pageNum);
-        });
-    }
-    window.speak = function() { window.AndroidInterface.speak(currentText); }
-    window.closeCard = function() {
-        document.getElementById('translation-card').style.display = 'none';
-        window.getSelection().removeAllRanges();
-    }
-    window.prevPage = function() { if(pageNum>1) renderPage(--pageNum); }
-    window.nextPage = function() { if(pageNum<pdfDoc.numPages) renderPage(++pageNum); }
+        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
 
-    const card = document.getElementById('translation-card');
-    const header = document.getElementById('card-header');
-    let isCardDragging = false, cStartX, cStartY, cInitLeft, cInitTop;
-    header.addEventListener('touchstart', (e) => {
-        e.preventDefault(); isCardDragging = true;
-        const t = e.touches[0]; cStartX = t.clientX; cStartY = t.clientY;
-        const r = card.getBoundingClientRect(); cInitLeft = r.left; cInitTop = r.top;
-    }, {passive: false});
-    document.addEventListener('touchmove', (e) => {
-        if(!isCardDragging) return;
-        const t = e.touches[0];
-        card.style.left = (cInitLeft + t.clientX - cStartX) + 'px';
-        card.style.top = (cInitTop + t.clientY - cStartY) + 'px';
-        card.style.transform = 'none';
-    }, {passive: false});
-    document.addEventListener('touchend', () => isCardDragging = false);
+        if(book) book.destroy();
+        book = ePub(bytes.buffer);
+        rendition = book.renderTo("viewer", { width: "100%", height: "100%", flow: "paginated", manager: "default" });
+
+        const savedLoc = localStorage.getItem(currentBookId);
+        if(savedLoc) rendition.display(savedLoc); else rendition.display();
+
+        rendition.themes.default({
+            "p": { "font-family": "Lora, serif !important", "font-size": "1.2rem !important", "line-height": "1.6 !important", "text-align": "justify !important" },
+            ".temp-hl": { "fill": "#3b82f6", "fill-opacity": "0.3", "mix-blend-mode": "multiply" },
+            "::selection": { "background": "transparent !important" }
+        });
+
+        rendition.on("click", (e) => {
+            if(document.getElementById('bottom-sheet').classList.contains('active')) { closeSheet(); return; }
+            const width = document.body.clientWidth;
+            const x = e.clientX;
+            if (x < width * 0.3) { prevPage(); }
+            else if (x > width * 0.7) { nextPage(); }
+            else { toggleControls(); }
+        });
+
+        rendition.on("touchstart", (e) => { touchStartX = e.changedTouches[0].screenX; touchStartY = e.changedTouches[0].screenY; });
+        rendition.on("touchend", (e) => {
+            const touchEndX = e.changedTouches[0].screenX;
+            const touchEndY = e.changedTouches[0].screenY;
+            const diffX = touchStartX - touchEndX;
+            const diffY = touchStartY - touchEndY;
+            if (Math.abs(diffX) > SWIPE_THRESHOLD && Math.abs(diffX) > Math.abs(diffY)) {
+                if (diffX > 0) { nextPage(); } else { prevPage(); }
+            }
+        });
+
+        rendition.on("selected", (cfiRange, contents) => {
+            book.getRange(cfiRange).then(range => {
+                const text = range.toString().trim();
+                if(text.length > 0) {
+                    contents.window.getSelection().removeAllRanges();
+                    if(tempHighlight) rendition.annotations.remove(tempHighlight, "highlight");
+                    tempHighlight = cfiRange;
+                    rendition.annotations.add("highlight", cfiRange, {}, null, "temp-hl");
+                    openSheet(text);
+                }
+            });
+            return false;
+        });
+
+        rendition.on("relocated", (location) => {
+            localStorage.setItem(currentBookId, location.start.cfi);
+            updateProgress(location);
+            updateProgressBar(location);
+        });
+
+        book.ready.then(() => book.locations.generate(1000));
+    };
+
+    // --- CORRECCIÓN: VERIFICAR SI ESTÁ GUARDADO ANTES DE BUSCAR ---
+    function openSheet(text) {
+        currentText = text;
+        document.getElementById('sheet-word').innerText = text;
+        const translationEl = document.getElementById('sheet-translation');
+        const sheet = document.getElementById('bottom-sheet');
+
+        // Reset visual
+        translationEl.innerText = "Cargando...";
+        translationEl.classList.add('animate-pulse');
+        sheet.classList.add('active');
+        checkSavedStatus(); // Actualizar botón
+
+        // 1. Buscar en diccionario local
+        const dict = JSON.parse(localStorage.getItem('my_dictionary_v2') || '{}');
+        if (dict[text]) {
+            translationEl.innerText = dict[text].translation;
+            translationEl.classList.remove('animate-pulse');
+            return; // ¡IMPORTANTE! Salir si se encontró
+        }
+
+        // 2. Si no está guardado, intentar traducir
+        // Intentamos ML Kit primero si está disponible
+        if(window.AndroidInterface && window.AndroidInterface.requestTranslation) {
+             window.AndroidInterface.requestTranslation(text);
+             // Esperar respuesta via callback
+        } else {
+             // Fallback web (solo si hay internet)
+             fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q=${encodeURIComponent(text)}`)
+            .then(r => r.json())
+            .then(d => {
+                if(d && d[0]) {
+                     translationEl.innerText = d[0].map(s => s[0]).join('');
+                     translationEl.classList.remove('animate-pulse');
+                }
+            })
+            .catch(() => {
+                translationEl.innerText = "Sin conexión";
+                translationEl.classList.remove('animate-pulse');
+            });
+        }
+    }
+
+    function closeSheet() {
+        document.getElementById('bottom-sheet').classList.remove('active');
+        if(tempHighlight) { rendition.annotations.remove(tempHighlight, "highlight"); tempHighlight = null; }
+    }
+
+    // --- CALLBACKS ANDROID ---
+    window.onTranslationReceived = function(translatedText) {
+        const el = document.getElementById('sheet-translation');
+        el.innerText = translatedText;
+        el.classList.remove('animate-pulse');
+    };
+
+    window.onTranslationError = function(msg) {
+        const el = document.getElementById('sheet-translation');
+        el.innerText = msg;
+        el.classList.remove('animate-pulse');
+    };
+
+    function checkSavedStatus() {
+        const dict = JSON.parse(localStorage.getItem('my_dictionary_v2') || '{}');
+        const btn = document.getElementById('btn-save');
+        const isSaved = dict.hasOwnProperty(currentText);
+        if (isSaved) {
+            btn.innerHTML = '<i data-lucide="trash-2" class="w-5 h-5"></i> Borrar';
+            btn.classList.replace('bg-blue-600', 'bg-red-600');
+        } else {
+            btn.innerHTML = '<i data-lucide="bookmark" class="w-5 h-5"></i> Guardar';
+            btn.classList.replace('bg-red-600', 'bg-blue-600');
+        }
+        lucide.createIcons();
+    }
+
+    function toggleSave() {
+        const dict = JSON.parse(localStorage.getItem('my_dictionary_v2') || '{}');
+        if (dict[currentText]) {
+            delete dict[currentText];
+        } else {
+            const trans = document.getElementById('sheet-translation').innerText;
+            if(trans.includes("...") || trans === "Sin conexión") return;
+            dict[currentText] = { translation: trans, date: new Date().toISOString(), book: window.AndroidInterface ? window.AndroidInterface.getCurrentBookName() : 'Unknown' };
+        }
+        localStorage.setItem('my_dictionary_v2', JSON.stringify(dict));
+        checkSavedStatus();
+    }
+
+    function prevPage() { if(rendition) rendition.prev(); }
+    function nextPage() { if(rendition) rendition.next(); }
+    function toggleControls() { document.getElementById('reader-header').classList.toggle('visible'); }
+    function updateProgress(location) { if(book.locations.length > 0) { const current = book.locations.locationFromCfi(location.start.cfi); const total = book.locations.total; document.getElementById('page-indicator').innerText = `${current} de ${total}`; } }
+    function updateProgressBar(location) { if(book.locations.length > 0) { const current = book.locations.locationFromCfi(location.start.cfi); const total = book.locations.total; const percentage = (current / total) * 100; document.getElementById('progress-bar').style.width = percentage + "%"; } }
+    function exitBook() { document.getElementById('reader-view').classList.add('hidden-view'); document.getElementById('library-view').classList.remove('hidden-view'); closeSheet(); loadLibrary(); }
+    function changeFontSize() { fontSize = fontSize === 140 ? 100 : fontSize + 20; rendition.themes.fontSize(fontSize + "%"); }
+    function toggleDarkMode() { isDarkMode = !isDarkMode; document.body.classList.toggle('dark-mode'); localStorage.setItem('darkMode', isDarkMode); }
+    function speak() { window.AndroidInterface.speak(currentText); }
+
+    function toggleSearch() {
+        const panel = document.getElementById('search-panel');
+        isSearchActive = !isSearchActive;
+        if(isSearchActive) { panel.classList.add('active'); document.getElementById('search-input').focus(); toggleControls(); } else { closeSearch(); }
+    }
+    function closeSearch() { document.getElementById('search-panel').classList.remove('active'); document.getElementById('search-input').value = ''; document.getElementById('search-results').innerHTML = ''; isSearchActive = false; }
+
+    document.getElementById('search-input').addEventListener('input', function(e) {
+        clearTimeout(searchTimeout);
+        const query = e.target.value.trim();
+        if(query.length < 2) { document.getElementById('search-results').innerHTML = ''; document.getElementById('search-status').innerText = 'Escribe al menos 2 caracteres'; return; }
+        searchTimeout = setTimeout(() => { performSearch(query); }, 300);
+    });
+
+    function performSearch(query) {
+        document.getElementById('search-status').innerText = 'Buscando...';
+        document.getElementById('search-results').innerHTML = '';
+        book.search(query).then(results => {
+            if(results.length === 0) { document.getElementById('search-status').innerText = 'No se encontraron resultados'; return; }
+            const fragment = document.createDocumentFragment();
+            results.slice(0, 10).forEach(result => {
+                const div = document.createElement('div');
+                div.className = 'p-3 bg-gray-50 dark:bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors';
+                div.innerHTML = `<div class="text-sm text-gray-600 dark:text-gray-400 mb-1">${result.cfi}</div><div class="text-gray-800 dark:text-gray-200 line-clamp-2">${result.excerpt}</div>`;
+                div.onclick = () => { rendition.display(result.cfi); closeSearch(); toggleControls(); };
+                fragment.appendChild(div);
+            });
+            document.getElementById('search-results').appendChild(fragment);
+            document.getElementById('search-status').innerText = `Encontrados: ${results.length}`;
+        }).catch(() => { document.getElementById('search-status').innerText = 'Error en la búsqueda'; });
+    }
+
+    function loadLibrary() {
+        if(!window.AndroidInterface) return;
+        try {
+            const list = JSON.parse(window.AndroidInterface.getLibraryList());
+            const grid = document.getElementById('books-grid');
+            grid.innerHTML = "";
+            if(list.length === 0) document.getElementById('empty-state').classList.remove('hidden');
+            else {
+                document.getElementById('empty-state').classList.add('hidden');
+                list.forEach(b => {
+                    const d = document.createElement('div');
+                    d.className = 'book-item';
+                    let name = b.name.replace('.epub','').replace(/^libro_\d+_?/,'').substring(0, 40);
+                    d.innerHTML = `<div class="book-cover"><i data-lucide="book"></i></div><span class="text-xs font-semibold text-center text-gray-700 dark:text-gray-300">${name}</span>`;
+                    d.onclick = () => window.AndroidInterface.loadBook(b.name);
+                    grid.appendChild(d);
+                });
+                lucide.createIcons();
+            }
+        } catch(e) {}
+    }
+    function addBook() { window.AndroidInterface.triggerFilePicker(); }
 </script>
 </body>
 </html>

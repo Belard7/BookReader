@@ -1,8 +1,7 @@
-package com.example.bookreader
+package com.example.bookreader// <--- ¡IMPORTANTE! Pon aquí tu paquete real
 
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.speech.tts.TextToSpeech
 import android.util.Base64
 import android.util.Log
@@ -18,21 +17,24 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 
+// IMPORTACIONES DE ML KIT CORREGIDAS (es 'nl', no 'nlp')
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.TranslatorOptions
+
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private lateinit var webView: WebView
     private lateinit var tts: TextToSpeech
 
-    // Variables para guardar el libro actual en memoria
-    private var pdfData: String = ""
+    private var bookData: String = ""
     private var currentFileName: String = ""
 
-    // El lanzador para seleccionar archivos PDF
+    // Selector de archivos
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             importAndOpenBook(uri)
-        } else {
-            Toast.makeText(this, "No se seleccionó ningún archivo", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -40,40 +42,92 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Ocultar el botón nativo antiguo si existe en el XML
+        // Ocultar botón nativo antiguo si existe
         val oldFab = findViewById<View>(R.id.btnLoadPdf)
-        if (oldFab != null) {
-            oldFab.visibility = View.GONE
-        }
+        if (oldFab != null) oldFab.visibility = View.GONE
 
-        // Inicializar motor de voz
+        // Inicializar TTS
         tts = TextToSpeech(this, this)
 
-        // Configurar navegador
+        // Configurar WebView
         webView = findViewById(R.id.webView)
         val settings = webView.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.allowFileAccess = true
 
-        // Habilitar depuración para ver errores en Logcat
+        // Depuración (opcional, ayuda a ver errores de JS en Logcat)
         WebView.setWebContentsDebuggingEnabled(true)
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = WebViewClient()
 
-        // Conectar el puente entre HTML y Android
-        webView.addJavascriptInterface(WebAppInterface(), "AndroidInterface")
+        // Preparar el modelo de traducción (descarga silenciosa)
+        prepareTranslationModel()
 
-        // Cargar la interfaz
+        // Conectar HTML
+        webView.addJavascriptInterface(WebAppInterface(), "AndroidInterface")
         webView.loadUrl("file:///android_asset/reader.html")
     }
 
-    // Función para copiar el libro seleccionado a la carpeta de la App
+    // --- TRADUCCIÓN OFFLINE (ML KIT) ---
+    private fun prepareTranslationModel() {
+        val options = TranslatorOptions.Builder()
+            .setSourceLanguage(TranslateLanguage.ENGLISH)
+            .setTargetLanguage(TranslateLanguage.SPANISH)
+            .build()
+        val translator = Translation.getClient(options)
+
+        // Descargar si es necesario (requiere wifi la primera vez)
+        val conditions = DownloadConditions.Builder()
+            .requireWifi()
+            .build()
+
+        translator.downloadModelIfNeeded(conditions)
+            .addOnSuccessListener { Log.d("MLKit", "Modelo listo") }
+            .addOnFailureListener { Log.e("MLKit", "Error modelo: $it") }
+    }
+
+    private fun translateText(text: String) {
+        val options = TranslatorOptions.Builder()
+            .setSourceLanguage(TranslateLanguage.ENGLISH)
+            .setTargetLanguage(TranslateLanguage.SPANISH)
+            .build()
+        val translator = Translation.getClient(options)
+
+        translator.downloadModelIfNeeded()
+            .addOnSuccessListener {
+                translator.translate(text)
+                    .addOnSuccessListener { translated ->
+                        // Escapar comillas para JS
+                        val safeText = translated.replace("'", "\\'").replace("\n", " ")
+                        runOnUiThread {
+                            // Llamar a la función JS que muestra el resultado
+                            webView.evaluateJavascript("javascript:onTranslationReceived('$safeText')", null)
+                        }
+                    }
+                    .addOnFailureListener {
+                        sendJsError("Error al traducir")
+                    }
+            }
+            .addOnFailureListener {
+                sendJsError("Descargando idioma... espera unos segundos")
+                Toast.makeText(this, "Descargando modelo Español (30MB)...", Toast.LENGTH_SHORT).show()
+            }
+    }
+
+    private fun sendJsError(msg: String) {
+        runOnUiThread {
+            webView.evaluateJavascript("javascript:onTranslationError('$msg')", null)
+        }
+    }
+
+    // --- GESTIÓN DE ARCHIVOS ---
     private fun importAndOpenBook(uri: Uri) {
         try {
-            Toast.makeText(this, "Importando libro...", Toast.LENGTH_SHORT).show()
-            val fileName = getFileName(uri) ?: "libro_${System.currentTimeMillis()}.pdf"
+            Toast.makeText(this, "Procesando...", Toast.LENGTH_SHORT).show()
+            // Nombre por defecto si falla la lectura
+            val fileName = getFileName(uri) ?: "libro.epub"
             val destFile = File(filesDir, fileName)
 
             contentResolver.openInputStream(uri)?.use { input ->
@@ -81,43 +135,36 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     input.copyTo(output)
                 }
             }
-            // Abrir el libro recién importado
             openBookByName(fileName)
-
         } catch (e: Exception) {
-            Toast.makeText(this, "Error importando: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    // Función para leer un libro guardado y enviarlo al HTML
     private fun openBookByName(fileName: String) {
         try {
             val file = File(filesDir, fileName)
             if (file.exists()) {
                 val bytes = file.readBytes()
-                // Convertir a Base64 para enviarlo por JS
-                pdfData = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                bookData = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 currentFileName = fileName
 
-                // Avisar al HTML que ya tenemos los datos listos
                 runOnUiThread {
-                    webView.evaluateJavascript("javascript:notifyPdfReady()", null)
+                    webView.evaluateJavascript("javascript:notifyBookReady()", null)
                 }
             }
         } catch (e: Exception) {
-            Log.e("PDF", "Error abriendo libro: ${e.message}")
-            Toast.makeText(this, "Error abriendo libro", Toast.LENGTH_SHORT).show()
+            Log.e("EPUB", "Error: ${e.message}")
         }
     }
 
-    // Utilidad para obtener el nombre real del archivo
     private fun getFileName(uri: Uri): String? {
         var result: String? = null
         if (uri.scheme == "content") {
             val cursor = contentResolver.query(uri, null, null, null, null)
             cursor.use {
                 if (it != null && it.moveToFirst()) {
-                    val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val index = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     if(index >= 0) result = it.getString(index)
                 }
             }
@@ -139,28 +186,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 
-    // --- CLASE PUENTE (LO QUE LLAMA EL HTML) ---
+    // --- PUENTE JS -> ANDROID ---
     inner class WebAppInterface {
-
         @JavascriptInterface
         fun speak(text: String) {
             tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
         }
 
         @JavascriptInterface
-        fun getPdfData(): String = pdfData
-
+        fun getBookData(): String = bookData
         @JavascriptInterface
         fun getCurrentBookName(): String = currentFileName
 
-        // Obtener lista de libros para la biblioteca
         @JavascriptInterface
         fun getLibraryList(): String {
-            val files = filesDir.listFiles { _, name -> name.endsWith(".pdf", true) }
+            // Buscar solo EPUBs
+            val files = filesDir.listFiles { _, name -> name.endsWith(".epub", true) }
             val sb = StringBuilder("[")
             files?.forEachIndexed { index, file ->
                 if (index > 0) sb.append(",")
-                // Escapar comillas para evitar romper el JSON
                 val safeName = file.name.replace("\"", "\\\"")
                 sb.append("{\"name\":\"$safeName\"}")
             }
@@ -169,25 +213,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         @JavascriptInterface
-        fun loadBook(name: String) {
-            openBookByName(name)
-        }
+        fun loadBook(name: String) = openBookByName(name)
 
-        @JavascriptInterface
-        fun resetApp() {
-            // Método vacío por si el HTML lo llama
-        }
-
-        // --- ARREGLO DEL BOTÓN: Ejecutar en hilo principal ---
         @JavascriptInterface
         fun triggerFilePicker() {
             runOnUiThread {
-                try {
-                    filePickerLauncher.launch("application/pdf")
-                } catch (e: Exception) {
-                    Toast.makeText(this@MainActivity, "Error lanzando selector: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                // Solo permitir seleccionar EPUB
+                filePickerLauncher.launch("application/epub+zip")
             }
+        }
+
+        // --- NUEVA: SOLICITUD DE TRADUCCIÓN ---
+        @JavascriptInterface
+        fun requestTranslation(text: String) {
+            translateText(text)
         }
     }
 }
